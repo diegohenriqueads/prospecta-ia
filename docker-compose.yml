@@ -1,0 +1,65 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: prospecta-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-prospecta}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-prospecta}
+      POSTGRES_DB: ${POSTGRES_DB:-prospecta}
+    volumes:
+      - prospecta_postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-prospecta} -d ${POSTGRES_DB:-prospecta}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: prospecta-backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # Garante que o backend sempre fale com o serviço "db" da própria rede
+      # do compose, independentemente do que estiver no .env local.
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-prospecta}:${POSTGRES_PASSWORD:-prospecta}@db:5432/${POSTGRES_DB:-prospecta}
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    volumes:
+      - ./backend:/app
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # URL que o navegador do usuário vai usar para falar com a API.
+        # Como o frontend roda no navegador (fora da rede interna do
+        # compose), NÃO use "http://backend:8000" aqui — use o endereço
+        # que a máquina do usuário realmente acessa.
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
+    container_name: prospecta-frontend
+    restart: unless-stopped
+    ports:
+      - "5173:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  prospecta_postgres_data:
